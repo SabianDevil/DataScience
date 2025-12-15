@@ -62,32 +62,28 @@ if uploaded_file is not None:
         ax2.axhline(y=threshold_occ, color='#ffcc00', linestyle='--', linewidth=1.5, label='Threshold Macet')
         
         ax2.set_title("Occupancy Historis dengan Prediksi Saat Ini", fontsize=14, pad=15)
-        ax2.set_ylabel("Occupancy")
+        ax2.set_ylabel("Occupancy (%)") # Menambahkan satuan di label sumbu Y
         ax2.set_xlabel("interval")
         ax2.legend(loc='upper right', frameon=True, facecolor='white', labelcolor='black')
         ax2.grid(False)
 
         st.pyplot(fig)
 
-        # --- LOGIKA STATUS & PREDIKSI (BAGIAN BARU) ---
+        # --- LOGIKA STATUS & PREDIKSI ---
         st.divider()
         st.subheader("🏁 Hasil Analisis Status")
 
         # Logika Penentuan Status
-        # Jika Occupancy LEBIH BESAR dari Threshold -> Macet (Biasanya occupancy tinggi indikator macet paling kuat)
-        # Atau Flow LEBIH BESAR dari Threshold -> Padat
-        
         status_text = "LANCAR 🟢"
-        warna_pesan = "success" # Hijau
+        warna_pesan = "success"
 
         if nilai_occ_saat_ini > threshold_occ:
             status_text = "MACET (Occupancy Tinggi) 🔴"
-            warna_pesan = "error" # Merah
+            warna_pesan = "error"
         elif nilai_flow_saat_ini > threshold_flow:
             status_text = "PADAT (Flow Tinggi) 🟠"
-            warna_pesan = "warning" # Kuning
+            warna_pesan = "warning"
 
-        # Tampilkan Kotak Status
         if warna_pesan == "error":
             st.error(f"Status Lalu Lintas: **{status_text}**")
         elif warna_pesan == "warning":
@@ -104,13 +100,14 @@ if uploaded_file is not None:
             label="Prediksi Flow", 
             value=f"{nilai_flow_saat_ini:.2f}", 
             delta=f"{nilai_flow_saat_ini - threshold_flow:.2f} dari batas",
-            delta_color="inverse" # Merah kalau positif (di atas batas), Hijau kalau negatif
+            delta_color="inverse" 
         )
         
+        # --- PERUBAHAN DI SINI (FORMAT PERSEN) ---
         c3.metric(
             label="Prediksi Occupancy", 
-            value=f"{nilai_occ_saat_ini:.4f}", 
-            delta=f"{nilai_occ_saat_ini - threshold_occ:.4f} dari batas",
+            value=f"{nilai_occ_saat_ini:.2f}%",  # Menambahkan tanda %
+            delta=f"{nilai_occ_saat_ini - threshold_occ:.2f}% dari batas", # Delta juga pakai %
             delta_color="inverse"
         )
 
