@@ -8,7 +8,9 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 
-# --- FUNGSI LOGIKA MATEMATIKA MANUAL (NUMPY) ---
+# ==========================================
+# 1. FUNGSI LOGIKA MATEMATIKA (MANUAL FUZZY)
+# ==========================================
 def get_triangular_y(x_array, a, b, c):
     """Membuat array Y untuk plotting bentuk segitiga"""
     y = []
@@ -23,7 +25,7 @@ def triangular_membership(x, a, b, c):
     return max(0, min((x - a) / (b - a + 1e-9), (c - x) / (c - b + 1e-9)))
 
 def calculate_fuzzy_logic(flow_val, occ_val, max_flow, max_occ):
-    # --- 1. FUZZIFICATION (Input -> Derajat 0-1) ---
+    # --- A. FUZZIFICATION (Input -> Derajat 0-1) ---
     
     # FLOW (Dinamis ikut max data)
     f_mid = max_flow * 0.5
@@ -40,7 +42,7 @@ def calculate_fuzzy_logic(flow_val, occ_val, max_flow, max_occ):
     occ_mid = triangular_membership(occ_val, max_occ * 0.2, o_mid_peak, max_occ * 0.8)
     occ_hi = triangular_membership(occ_val, max_occ * 0.6, max_occ, max_occ * 1.5)
     
-    # --- 2. INFERENCE (Menerapkan Rules) ---
+    # --- B. INFERENCE (Menerapkan Rules) ---
     # Rule 1: Occ Low -> LANCAR
     alpha_lancar_1 = occ_low
     
@@ -53,32 +55,33 @@ def calculate_fuzzy_logic(flow_val, occ_val, max_flow, max_occ):
     # Rule 4: Occ Mid tapi Flow Low -> LANCAR
     alpha_lancar_2 = min(occ_mid, flow_low)
     
-    # Gabungkan Rule untuk Output yang sama (Max aggregation)
-    # Total kekuatan untuk Lancar, Padat, Macet
+    # Gabungkan Rule (Max aggregation)
     act_lancar = max(alpha_lancar_1, alpha_lancar_2)
     act_padat = alpha_padat
     act_macet = alpha_macet
     
-    # --- 3. DEFUZZIFICATION (Centroid) ---
-    # Titik pusat (Singleton) untuk perhitungan skor sederhana
-    z_lancar = 20
-    z_padat = 60
-    z_macet = 90
+    # --- C. DEFUZZIFICATION (Weighted Average) ---
+    # [TUNING] Bobot disesuaikan agar status MACET lebih mudah tercapai
+    z_lancar = 10   # Pusat Lancar
+    z_padat = 50    # Pusat Padat
+    z_macet = 100   # Pusat Macet (Dinaikkan biar skor tinggi)
     
     pembilang = (act_lancar * z_lancar) + (act_padat * z_padat) + (act_macet * z_macet)
     penyebut = act_lancar + act_padat + act_macet
     
     score = 0 if penyebut == 0 else pembilang / penyebut
     
-    # Kembalikan semua data untuk visualisasi "Arsir"
+    # Return semua data untuk visualisasi
     return {
         'score': score,
         'flow_mfs': (flow_low, flow_mid, flow_hi),
         'occ_mfs': (occ_low, occ_mid, occ_hi),
-        'activations': (act_lancar, act_padat, act_macet) # Ini kunci gambar arsir
+        'activations': (act_lancar, act_padat, act_macet)
     }
 
-# --- KONFIGURASI HALAMAN ---
+# ==========================================
+# 2. KONFIGURASI HALAMAN STREAMLIT
+# ==========================================
 st.set_page_config(page_title="Sistem Prediksi Kemacetan", layout="wide")
 plt.style.use('dark_background')
 
@@ -152,25 +155,29 @@ if uploaded_file is not None:
             thresh_flow = df[col_flow].max() * 0.7
             thresh_occ = df[col_occ].max() * 0.3
             
-            # --- DASHBOARD ---
+            # --- DASHBOARD UTAMA ---
             st.title(f"Sistem Prediksi Kemacetan")
             
             c_stat, c_flow, c_occ, c_int, c_mod = st.columns(5)
             
-            # Hitung Logika Fuzzy Dulu untuk status
+            # HITUNG LOGIKA FUZZY
             max_flow_data = df[col_flow].max()
             max_occ_data = df[col_occ].max()
             
             fuzzy_res = calculate_fuzzy_logic(pred_flow, pred_occ, max_flow_data, max_occ_data)
             f_score = fuzzy_res['score']
             
+            # [TUNING] LOGIKA STATUS (Diubah Thresholdnya)
             status_text = "LANCAR"
             status_color = "green"
-            if f_score > 45: 
+            
+            if f_score > 40: 
                 status_text = "PADAT"
                 status_color = "orange"
-            if f_score > 75: 
-                status_text = "MACET"
+            
+            # Batas Macet diturunkan ke 70 agar lebih sensitif
+            if f_score > 70: 
+                status_text = "MACET TOTAL"
                 status_color = "red"
 
             c_stat.markdown(f"### Status:\n## :{status_color}[{status_text}]")
@@ -181,7 +188,7 @@ if uploaded_file is not None:
             
             st.divider()
 
-            # --- GRAFIK PREDIKSI ---
+            # --- GRAFIK PREDIKSI AI ---
             st.subheader("📈 Visualisasi Prediksi")
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
             fig.patch.set_facecolor('black')
@@ -207,23 +214,20 @@ if uploaded_file is not None:
 
             st.pyplot(fig)
 
-            # --- BAGIAN FUZZY LOGIC LENGKAP (DENGAN ARSIR) ---
+            # --- VISUALISASI FUZZY LOGIC (DENGAN ARSIR) ---
             st.divider()
             st.subheader("🤖 Analisis Fuzzy Logic & Area Keputusan")
 
             col_viz, col_result = st.columns([3, 1])
 
             with col_viz:
-                # Kita buat 3 subplot ke bawah: Flow, Occupancy, dan OUTPUT (Hasil Arsir)
+                # 3 SUBPLOT: FLOW, OCCUPANCY, OUTPUT
                 fig_fuz, (ax_f, ax_o, ax_out) = plt.subplots(3, 1, figsize=(8, 10))
                 fig_fuz.subplots_adjust(hspace=0.6)
                 fig_fuz.patch.set_facecolor('#0e1117')
                 
-                # 1. PLOT FLOW (Skala Diperbaiki agar garis bergerak)
-                # Saya perkecil range x-axis menjadi 1.2 x Max (bukan 1.5)
-                # Ini akan membuat grafik lebih "zoom in"
+                # 1. PLOT FLOW (Zoom In Scale)
                 x_flow = np.linspace(0, max_flow_data * 1.2, 500) 
-                
                 y_f_low = get_triangular_y(x_flow, -1, 0, max_flow_data*0.5)
                 y_f_mid = get_triangular_y(x_flow, 0, max_flow_data*0.5, max_flow_data)
                 y_f_hi = get_triangular_y(x_flow, max_flow_data*0.5, max_flow_data, max_flow_data*1.5)
@@ -257,36 +261,32 @@ if uploaded_file is not None:
                 ax_o.spines['left'].set_color('white')
 
                 # 3. PLOT OUTPUT (AREA ARSIR AGREGASI)
-                # Ambil nilai aktivasi dari fungsi fuzzy
                 act_l, act_p, act_m = fuzzy_res['activations']
                 
-                x_out = np.linspace(0, 100, 500)
+                x_out = np.linspace(0, 120, 500) # Range output 0-120
                 
-                # Buat bentuk dasar segitiga Output (Lancar, Padat, Macet)
-                # Output Scale: 0-100
-                y_out_l = get_triangular_y(x_out, -20, 0, 40)
-                y_out_p = get_triangular_y(x_out, 20, 50, 80)
-                y_out_m = get_triangular_y(x_out, 60, 100, 120)
+                # [TUNING] Bentuk Segitiga Output disesuaikan dengan bobot baru (10, 50, 100)
+                y_out_l = get_triangular_y(x_out, -20, 10, 40)   # Puncak 10
+                y_out_p = get_triangular_y(x_out, 20, 50, 80)    # Puncak 50
+                y_out_m = get_triangular_y(x_out, 60, 100, 140)  # Puncak 100
                 
-                # Potong segitiga berdasarkan Aktivasi (Clipping) menggunakan logika Fuzzy
-                # Ini yang membuat bentuk "gunung" yang aneh-aneh (regresi area)
+                # Clipping (Potong segitiga berdasarkan kekuatan rule)
                 y_out_l_clip = np.fmin(act_l, y_out_l)
                 y_out_p_clip = np.fmin(act_p, y_out_p)
                 y_out_m_clip = np.fmin(act_m, y_out_m)
                 
-                # Gabungkan semua potongan (Union / Aggregation)
+                # Aggregation (Gabung area)
                 y_aggregated = np.fmax(y_out_l_clip, np.fmax(y_out_p_clip, y_out_m_clip))
                 
-                # Gambar garis tipis bentuk aslinya (sbg referensi)
+                # Plot Garis Asli (Tipis/Putus-putus)
                 ax_out.plot(x_out, y_out_l, '--', color='#1f77b4', alpha=0.3)
                 ax_out.plot(x_out, y_out_p, '--', color='#ff7f0e', alpha=0.3)
                 ax_out.plot(x_out, y_out_m, '--', color='#2ca02c', alpha=0.3)
                 
-                # GAMBAR ARSIR (FILLED AREA)
-                # Ini yang teman Anda maksud dengan "Arsir / Regresi"
+                # PLOT ARSIR (CYAN)
                 ax_out.fill_between(x_out, 0, y_aggregated, facecolor='cyan', alpha=0.5, label='Area Keputusan')
                 
-                # Garis Tegas Hasil Akhir (Centroid)
+                # Garis Tegas Score Akhir
                 ax_out.axvline(f_score, color='red', linewidth=3, linestyle='-', label='Score Akhir')
                 
                 ax_out.set_title(f"Output: Tingkat Kemacetan (Score: {f_score:.2f})", color='white', loc='left')
@@ -300,17 +300,17 @@ if uploaded_file is not None:
 
             with col_result:
                 st.markdown("### Detail Nilai")
-                st.info("Grafik paling bawah adalah 'Area Keputusan'. Daerah berwarna Cyan (Biru Muda) adalah hasil penggabungan semua aturan logika.")
+                st.info("Grafik paling bawah menunjukkan area keputusan. Jika area bergeser ke kanan (angka 100), berarti Macet.")
                 
                 st.markdown(f"""
                 **Nilai Input:**
                 * Flow: `{pred_flow:.1f}`
                 * Occ: `{pred_occ:.1f}`
                 
-                **Aktivasi Aturan:**
-                * Lancar: `{act_l:.2f}` (Kekuatan)
-                * Padat: `{act_p:.2f}` (Kekuatan)
-                * Macet: `{act_m:.2f}` (Kekuatan)
+                **Kekuatan Rule:**
+                * Lancar: `{act_l:.2f}`
+                * Padat: `{act_p:.2f}`
+                * Macet: `{act_m:.2f}`
                 
                 **Hasil Akhir:**
                 # {f_score:.2f}
