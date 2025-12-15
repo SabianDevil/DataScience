@@ -1,127 +1,159 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import make_pipeline
 
-# --- 1. KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Prediksi Kemacetan", layout="wide")
+# --- KONFIGURASI HALAMAN ---
+st.set_page_config(page_title="Sistem Prediksi Kemacetan", layout="wide")
 plt.style.use('dark_background')
 
-st.title("📈 Simulasi Prediksi Kemacetan")
-st.markdown("Input jam berapa saja, sistem akan mencari pola data yang sesuai di posisi tersebut.")
+# --- SIDEBAR: LOGO & JUDUL ---
+st.sidebar.title("🚦 Sistem Prediksi Kemacetan")
+st.sidebar.markdown("Input detik (0-86400) untuk memprediksi kondisi lalu lintas.")
 
-# --- 2. SIDEBAR PANEL ---
-st.sidebar.header("📂 Panel Kontrol")
-uploaded_file = st.sidebar.file_uploader("Upload file CSV", type=["csv"])
+# --- 1. UPLOAD DATA ---
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
 if uploaded_file is not None:
     try:
-        # BACA DATA
         df = pd.read_csv(uploaded_file)
         
-        # --- KONFIGURASI MANUAL (Hanya Flow & Occupancy) ---
-        st.sidebar.subheader("⚙️ Konfigurasi Kolom")
+        # --- 2. PERSIAPAN DATA (TIDAK BUTUH TANGGAL) ---
+        # Kita anggap 'index' baris sebagai representasi waktu (urutan detik/interval)
+        # X = Fitur Waktu (Kita buat urutan angka dari 0 sampai jumlah data)
+        df['interval_index'] = np.arange(len(df))
         
-        # Kita ambil semua kolom angka
+        # Konfigurasi Kolom Target
+        st.sidebar.subheader("⚙️ Konfigurasi Data")
         numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
-        
-        # User pilih manual kolom mana yang Flow, mana yang Occupancy
-        col_flow = st.sidebar.selectbox("Pilih Kolom Flow:", numeric_cols, index=0)
-        # Otomatis coba pilih index ke-1 untuk occupancy
+        col_flow = st.sidebar.selectbox("Kolom Flow:", numeric_cols, index=0)
         idx_occ = 1 if len(numeric_cols) > 1 else 0
-        col_occ = st.sidebar.selectbox("Pilih Kolom Occupancy:", numeric_cols, index=idx_occ)
+        col_occ = st.sidebar.selectbox("Kolom Occupancy:", numeric_cols, index=idx_occ)
 
-        # --- INPUT WAKTU (JAM MENIT DETIK) ---
+        # --- 3. PILIH MODEL AI ---
         st.sidebar.divider()
-        st.sidebar.subheader("🎚️ Input Waktu Simulasi")
+        st.sidebar.subheader("🧠 Pengaturan Model AI")
+        model_option = st.sidebar.selectbox(
+            "Pilih Model AI:",
+            ("Decision Tree (Akurat)", "Linear Regression (Simpel)", "Polynomial Regression (Melengkung)")
+        )
+
+        # --- 4. INPUT DETIK (SEPERTI TEMAN ANDA) ---
+        st.sidebar.divider()
+        st.sidebar.subheader("⏱️ Metode Input")
         
-        c1, c2, c3 = st.sidebar.columns(3)
-        with c1: input_jam = st.number_input("Jam", 0, 23, 12)   # Default jam 12
-        with c2: input_menit = st.number_input("Menit", 0, 59, 0)
-        with c3: input_detik = st.number_input("Detik", 0, 59, 0)
+        # Slider/Input angka dari 0 sampai jumlah data (maksimum detik)
+        max_val = len(df)
+        input_detik = st.sidebar.number_input(f"Input Detik/Interval (0 - {max_val})", min_value=0, max_value=max_val, value=int(max_val/2))
 
-        # --- LOGIKA MAPPING (TRIK TEMAN ANDA) ---
-        # Mengubah Input Waktu menjadi Posisi Baris Data (Index)
-        
-        # 1. Hitung total detik dari input user (0 s/d 86400)
-        input_total_seconds = (input_jam * 3600) + (input_menit * 60) + input_detik
-        total_seconds_in_day = 24 * 3600
-        
-        # 2. Hitung Persentase Waktu (Contoh: Jam 12 siang = 50%)
-        ratio_waktu = input_total_seconds / total_seconds_in_day
-        
-        # 3. Terapkan ratio ke jumlah total baris data
-        # Jika data ada 1000 baris, jam 12 siang berarti baris ke-500
-        total_rows = len(df)
-        target_index = int(ratio_waktu * (total_rows - 1))
-        
-        # Pastikan tidak error kalau index kebablasan
-        target_index = max(0, min(target_index, total_rows - 1))
+        if st.sidebar.button("🚀 Prediksi Sekarang", type="primary"):
+            
+            # --- PROSES PELATIHAN MODEL (TRAINING) ---
+            X = df[['interval_index']] # Data input (Waktu)
+            y_flow = df[col_flow]      # Target 1
+            y_occ = df[col_occ]        # Target 2
+            
+            # Logika pemilihan model
+            if "Decision Tree" in model_option:
+                model_flow = DecisionTreeRegressor(max_depth=10)
+                model_occ = DecisionTreeRegressor(max_depth=10)
+            elif "Polynomial" in model_option:
+                # Derajat 4 agar bisa melengkung naik turun
+                model_flow = make_pipeline(PolynomialFeatures(4), LinearRegression())
+                model_occ = make_pipeline(PolynomialFeatures(4), LinearRegression())
+            else:
+                model_flow = LinearRegression()
+                model_occ = LinearRegression()
+            
+            # Latih Model (Fit)
+            model_flow.fit(X, y_flow)
+            model_occ.fit(X, y_occ)
+            
+            # --- LAKUKAN PREDIKSI ---
+            input_data = pd.DataFrame({'interval_index': [input_detik]})
+            pred_flow = model_flow.predict(input_data)[0]
+            pred_occ = model_occ.predict(input_data)[0]
+            
+            # Hitung Threshold Otomatis
+            thresh_flow = df[col_flow].max() * 0.7
+            thresh_occ = df[col_occ].max() * 0.3
+            
+            # --- TAMPILAN UTAMA ---
+            st.title("Sistem Prediksi Kemacetan Munich")
+            
+            # 1. KARTU STATUS (Metric Besar)
+            col_stat, col_f, col_o, col_int, col_mod = st.columns(5)
+            
+            # Tentukan Status
+            status_text = "LANCAR"
+            status_color = "green"
+            if pred_occ > thresh_occ:
+                status_text = "MACET TOTAL"
+                status_color = "red"
+            elif pred_flow > thresh_flow:
+                status_text = "PADAT MERAYAP"
+                status_color = "orange"
+                
+            col_stat.markdown(f"### Status:\n## :{status_color}[{status_text}]")
+            col_f.metric("Prediksi Flow", f"{pred_flow:.1f}")
+            col_o.metric("Prediksi Occupancy", f"{pred_occ:.2f}%")
+            col_int.metric("Input Interval", input_detik)
+            col_mod.markdown(f"**Model AI:**\n{model_option}")
+            
+            st.divider()
 
-        # --- AMBIL DATA ---
-        nilai_flow = df.iloc[target_index][col_flow]
-        nilai_occ = df.iloc[target_index][col_occ]
+            # 2. GRAFIK POSISI PREDIKSI
+            st.subheader("📈 Posisi Prediksi pada Data Historis")
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+            fig.patch.set_facecolor('black')
+            fig.patch.set_alpha(0.0)
 
-        # --- HITUNG THRESHOLD (BATAS MACET) OTOMATIS ---
-        max_flow = int(df[col_flow].max())
-        max_occ = float(df[col_occ].max())
-        
-        # Batas Macet = 30% dari nilai tertinggi Occupancy
-        thresh_occ = max_occ * 0.3
-        # Batas Padat = 70% dari nilai tertinggi Flow
-        thresh_flow = max_flow * 0.7
+            # Grafik Flow
+            ax1.plot(df['interval_index'], df[col_flow], color='white', alpha=0.1, label='Data Asli')
+            # Garis Prediksi Model (Opsional: Menggambar garis pola AI)
+            y_flow_pred_all = model_flow.predict(X)
+            ax1.plot(df['interval_index'], y_flow_pred_all, color='cyan', alpha=0.4, linewidth=1, label='Pola AI')
+            
+            # Titik Merah Prediksi
+            ax1.scatter(input_detik, pred_flow, color='red', s=200, zorder=10, label='Prediksi Saat Ini', edgecolors='white')
+            ax1.axhline(thresh_flow, color='#ffcc00', linestyle='--', label='Threshold')
+            
+            ax1.set_title("Flow Historis vs Prediksi AI", color='white')
+            ax1.set_facecolor('black')
+            ax1.grid(False)
+            legend1 = ax1.legend(facecolor='#262730', edgecolor='white')
+            for text in legend1.get_texts(): text.set_color("white")
+            ax1.tick_params(colors='white')
 
-        # --- VISUALISASI ---
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-        
-        # Formatting String Waktu untuk Label
-        waktu_str = f"{input_jam:02d}:{input_menit:02d}:{input_detik:02d}"
+            # Grafik Occupancy
+            ax2.plot(df['interval_index'], df[col_occ], color='white', alpha=0.1, label='Data Asli')
+            y_occ_pred_all = model_occ.predict(X)
+            ax2.plot(df['interval_index'], y_occ_pred_all, color='cyan', alpha=0.4, linewidth=1, label='Pola AI')
+            
+            ax2.scatter(input_detik, pred_occ, color='red', s=200, zorder=10, label='Prediksi Saat Ini', edgecolors='white')
+            ax2.axhline(thresh_occ, color='#ffcc00', linestyle='--', label='Threshold')
+            
+            ax2.set_title("Occupancy Historis vs Prediksi AI", color='white')
+            ax2.set_facecolor('black')
+            ax2.grid(False)
+            legend2 = ax2.legend(facecolor='#262730', edgecolor='white')
+            for text in legend2.get_texts(): text.set_color("white")
+            ax2.tick_params(colors='white')
 
-        # Grafik 1: Flow
-        ax1.plot(df.index, df[col_flow], color='white', alpha=0.15, label='Data Historis')
-        ax1.scatter(target_index, nilai_flow, color='red', s=150, zorder=10, label=f'Pukul {waktu_str}', edgecolors='white')
-        ax1.axhline(thresh_flow, color='#ffcc00', linestyle='--', label='Batas Padat')
-        ax1.set_title("Grafik Flow", fontsize=14, pad=10)
-        ax1.legend(facecolor='#262730', labelcolor='white')
-        ax1.grid(False)
+            st.pyplot(fig)
 
-        # Grafik 2: Occupancy
-        ax2.plot(df.index, df[col_occ], color='white', alpha=0.15, label='Data Historis')
-        ax2.scatter(target_index, nilai_occ, color='red', s=150, zorder=10, label=f'Pukul {waktu_str}', edgecolors='white')
-        ax2.axhline(thresh_occ, color='#ffcc00', linestyle='--', label='Batas Macet')
-        ax2.set_title("Grafik Occupancy", fontsize=14, pad=10)
-        ax2.legend(facecolor='#262730', labelcolor='white')
-        ax2.grid(False)
-
-        st.pyplot(fig)
-
-        # --- HASIL STATUS ---
-        st.divider()
-        st.subheader(f"🏁 Analisis Pukul {waktu_str}")
-        
-        # Logika Status
-        status = "LANCAR 🟢"
-        warna = "success"
-
-        if nilai_occ > thresh_occ:
-            status = "MACET (Occupancy Tinggi) 🔴"
-            warna = "error"
-        elif nilai_flow > thresh_flow:
-            status = "PADAT (Flow Tinggi) 🟠"
-            warna = "warning"
-
-        if warna == "error": st.error(f"Status: **{status}**")
-        elif warna == "warning": st.warning(f"Status: **{status}**")
-        else: st.success(f"Status: **{status}**")
-
-        # Metric Cards
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Waktu Simulasi", waktu_str)
-        c2.metric("Prediksi Flow", f"{nilai_flow:.0f}", delta=f"{nilai_flow - thresh_flow:.0f} dr batas", delta_color="inverse")
-        c3.metric("Prediksi Occupancy", f"{nilai_occ:.2f}%", delta=f"{nilai_occ - thresh_occ:.2f}% dr batas", delta_color="inverse")
+        else:
+            st.info("👈 Masukkan Detik/Interval di Sidebar lalu klik tombol 'Prediksi Sekarang'.")
 
     except Exception as e:
         st.error(f"Terjadi kesalahan: {e}")
-        st.info("Pastikan kolom Flow dan Occupancy yang dipilih benar.")
 
 else:
-    st.info("👋 Silakan upload file CSV Traffic Anda.")
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Duke_University_Logo.svg/1200px-Duke_University_Logo.svg.png", width=100) # Logo placeholder
+    st.title("Sistem Prediksi Kemacetan Munich")
+    st.info("👋 Silakan upload file CSV di sebelah kiri.")
