@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # Konfigurasi Halaman
 st.set_page_config(page_title="Posisi Prediksi Data", layout="wide")
 
-# Mengatur tema Matplotlib menjadi Gelap (agar sesuai gambar Anda)
+# Mengatur tema Matplotlib menjadi Gelap
 plt.style.use('dark_background')
 
 st.title("📈 Posisi Prediksi pada Data Historis")
@@ -20,7 +20,7 @@ if uploaded_file is not None:
         # 1. BACA DATA
         df = pd.read_csv(uploaded_file)
         
-        # 2. PILIH KOLOM (Agar user bisa atur sendiri)
+        # 2. PILIH KOLOM
         st.sidebar.subheader("⚙️ Konfigurasi Kolom")
         numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
         
@@ -31,11 +31,9 @@ if uploaded_file is not None:
         st.sidebar.divider()
         st.sidebar.subheader("🎚️ Simulasi Prediksi")
         
-        # Slider untuk menentukan posisi titik MERAH (Interval)
         max_idx = len(df) - 1
         posisi_saat_ini = st.sidebar.slider("Posisi Interval (Titik Merah)", 0, max_idx, int(max_idx/2))
         
-        # Slider untuk menentukan batas ambang KUNING (Threshold)
         max_flow = int(df[col_flow].max())
         max_occ = float(df[col_occ].max())
         
@@ -43,54 +41,78 @@ if uploaded_file is not None:
         threshold_occ = st.sidebar.slider("Threshold Macet (Occupancy)", 0.0, max_occ, max_occ * 0.3)
 
         # --- VISUALISASI MATPLOTLIB ---
-        
-        # Membuat canvas gambar (2 kolom: Kiri Flow, Kanan Occupancy)
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
         # === GRAFIK 1: FLOW ===
-        # A. Plot Data Historis (Abu-abu transparan)
         ax1.plot(df.index, df[col_flow], color='white', alpha=0.15, label='Data Historis', linewidth=1)
-        
-        # B. Plot Titik Merah (Prediksi Saat Ini)
         nilai_flow_saat_ini = df.iloc[posisi_saat_ini][col_flow]
         ax1.scatter(posisi_saat_ini, nilai_flow_saat_ini, color='red', s=100, zorder=5, label='Prediksi Saat Ini')
-        
-        # C. Plot Garis Kuning (Threshold)
         ax1.axhline(y=threshold_flow, color='#ffcc00', linestyle='--', linewidth=1.5, label='Threshold Macet')
-
-        # D. Kosmetik Grafik
+        
         ax1.set_title("Flow Historis dengan Prediksi Saat Ini", fontsize=14, pad=15)
         ax1.set_ylabel("Flow")
         ax1.set_xlabel("interval")
         ax1.legend(loc='upper right', frameon=True, facecolor='white', labelcolor='black')
-        ax1.grid(False) # Hilangkan grid agar mirip gambar referensi
+        ax1.grid(False)
 
         # === GRAFIK 2: OCCUPANCY ===
-        # A. Plot Data Historis
         ax2.plot(df.index, df[col_occ], color='white', alpha=0.15, label='Data Historis', linewidth=1)
-        
-        # B. Plot Titik Merah
         nilai_occ_saat_ini = df.iloc[posisi_saat_ini][col_occ]
         ax2.scatter(posisi_saat_ini, nilai_occ_saat_ini, color='red', s=100, zorder=5, label='Prediksi Saat Ini')
-        
-        # C. Plot Garis Kuning
         ax2.axhline(y=threshold_occ, color='#ffcc00', linestyle='--', linewidth=1.5, label='Threshold Macet')
-
-        # D. Kosmetik Grafik
+        
         ax2.set_title("Occupancy Historis dengan Prediksi Saat Ini", fontsize=14, pad=15)
         ax2.set_ylabel("Occupancy")
         ax2.set_xlabel("interval")
         ax2.legend(loc='upper right', frameon=True, facecolor='white', labelcolor='black')
         ax2.grid(False)
 
-        # Tampilkan ke Streamlit
         st.pyplot(fig)
 
-        # Tampilkan Angka Detail di Bawah Grafik
+        # --- LOGIKA STATUS & PREDIKSI (BAGIAN BARU) ---
+        st.divider()
+        st.subheader("🏁 Hasil Analisis Status")
+
+        # Logika Penentuan Status
+        # Jika Occupancy LEBIH BESAR dari Threshold -> Macet (Biasanya occupancy tinggi indikator macet paling kuat)
+        # Atau Flow LEBIH BESAR dari Threshold -> Padat
+        
+        status_text = "LANCAR 🟢"
+        warna_pesan = "success" # Hijau
+
+        if nilai_occ_saat_ini > threshold_occ:
+            status_text = "MACET (Occupancy Tinggi) 🔴"
+            warna_pesan = "error" # Merah
+        elif nilai_flow_saat_ini > threshold_flow:
+            status_text = "PADAT (Flow Tinggi) 🟠"
+            warna_pesan = "warning" # Kuning
+
+        # Tampilkan Kotak Status
+        if warna_pesan == "error":
+            st.error(f"Status Lalu Lintas: **{status_text}**")
+        elif warna_pesan == "warning":
+            st.warning(f"Status Lalu Lintas: **{status_text}**")
+        else:
+            st.success(f"Status Lalu Lintas: **{status_text}**")
+
+        # Tampilkan Angka Prediksi
         c1, c2, c3 = st.columns(3)
+        
         c1.metric("Posisi Interval", posisi_saat_ini)
-        c2.metric("Nilai Flow Saat Ini", f"{nilai_flow_saat_ini:.2f}", delta=f"{nilai_flow_saat_ini - threshold_flow:.2f} dari batas")
-        c3.metric("Nilai Occupancy Saat Ini", f"{nilai_occ_saat_ini:.4f}", delta=f"{nilai_occ_saat_ini - threshold_occ:.4f} dari batas")
+        
+        c2.metric(
+            label="Prediksi Flow", 
+            value=f"{nilai_flow_saat_ini:.2f}", 
+            delta=f"{nilai_flow_saat_ini - threshold_flow:.2f} dari batas",
+            delta_color="inverse" # Merah kalau positif (di atas batas), Hijau kalau negatif
+        )
+        
+        c3.metric(
+            label="Prediksi Occupancy", 
+            value=f"{nilai_occ_saat_ini:.4f}", 
+            delta=f"{nilai_occ_saat_ini - threshold_occ:.4f} dari batas",
+            delta_color="inverse"
+        )
 
     except Exception as e:
         st.error(f"Terjadi kesalahan: {e}")
