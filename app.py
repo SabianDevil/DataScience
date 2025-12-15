@@ -8,7 +8,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 
-# --- FUNGSI BANTUAN UNTUK VISUALISASI MANUAL ---
+# --- FUNGSI BANTUAN ---
 def get_triangular_y(x_array, a, b, c):
     """Menghitung nilai Y untuk grafik segitiga"""
     y = []
@@ -18,33 +18,55 @@ def get_triangular_y(x_array, a, b, c):
     return np.array(y)
 
 def triangular_membership(x, a, b, c):
-    """Fungsi hitung satu titik (untuk logika)"""
+    """Fungsi hitung satu titik"""
     return max(0, min((x - a) / (b - a + 1e-9), (c - x) / (c - b + 1e-9)))
 
-def calculate_fuzzy_score(flow_val, occ_val, max_flow):
-    # Logika Manual Fuzzy (Sama seperti sebelumnya)
-    f_mid_peak = max_flow * 0.5
+def calculate_fuzzy_score(flow_val, occ_val, max_flow, max_occ):
+    # --- 1. FUZZIFICATION (DINAMIS) ---
     
-    # Derajat Keanggotaan
-    flow_rendah = triangular_membership(flow_val, -1, 0, f_mid_peak)
-    flow_sedang = triangular_membership(flow_val, 0, f_mid_peak, max_flow)
-    flow_tinggi = triangular_membership(flow_val, f_mid_peak, max_flow, max_flow * 1.5)
+    # FLOW: Batas berdasarkan max data flow
+    f_mid = max_flow * 0.5
+    f_high_peak = max_flow
     
-    occ_rendah = triangular_membership(occ_val, -1, 0, 40)
-    occ_sedang = triangular_membership(occ_val, 20, 50, 80)
-    occ_tinggi = triangular_membership(occ_val, 60, 100, 150)
+    flow_rendah = triangular_membership(flow_val, -1, 0, f_mid)
+    flow_sedang = triangular_membership(flow_val, 0, f_mid, f_high_peak)
+    flow_tinggi = triangular_membership(flow_val, f_mid, f_high_peak, f_high_peak * 1.5)
     
-    # Inference Rules
+    # OCCUPANCY: Batas berdasarkan max data occupancy (PERBAIKAN DISINI)
+    # Kita bagi range data occupancy menjadi 3 bagian proporsional
+    o_low_limit = max_occ * 0.4  # 40% dari max data
+    o_mid_peak = max_occ * 0.5   # 50% dari max data
+    o_high_start = max_occ * 0.6 # 60% dari max data
+    
+    occ_rendah = triangular_membership(occ_val, -1, 0, o_low_limit)
+    occ_sedang = triangular_membership(occ_val, max_occ*0.2, o_mid_peak, max_occ*0.8)
+    occ_tinggi = triangular_membership(occ_val, o_high_start, max_occ, max_occ * 1.5)
+    
+    # --- 2. INFERENCE RULES ---
+    # R1: Occ Rendah -> Lancar
     r1 = occ_rendah 
-    r2 = min(occ_sedang, flow_sedang)
-    r3 = max(occ_tinggi, flow_tinggi)
-    r4 = min(occ_sedang, flow_rendah) 
+    z1 = 20 
     
-    # Defuzzification
-    pembilang = (r1 * 20) + (r2 * 60) + (r3 * 90) + (r4 * 30)
+    # R2: Occ Sedang & Flow Sedang -> Padat
+    r2 = min(occ_sedang, flow_sedang)
+    z2 = 60 
+    
+    # R3: Occ Tinggi ATAU Flow Tinggi -> Macet
+    # Gunakan max() agar jika salah satu tinggi, langsung dianggap macet
+    r3 = max(occ_tinggi, flow_tinggi)
+    z3 = 90 
+    
+    # R4: Kasus Khusus (Occ Sedang tapi Flow Rendah) -> Lancar
+    r4 = min(occ_sedang, flow_rendah) 
+    z4 = 30
+    
+    # --- 3. DEFUZZIFICATION ---
+    pembilang = (r1 * z1) + (r2 * z2) + (r3 * z3) + (r4 * z4)
     penyebut = r1 + r2 + r3 + r4
     
     score = 0 if penyebut == 0 else pembilang / penyebut
+    
+    # Return semua variabel untuk visualisasi
     return score, flow_rendah, flow_sedang, flow_tinggi, occ_rendah, occ_sedang, occ_tinggi
 
 # --- KONFIGURASI HALAMAN ---
@@ -62,11 +84,9 @@ if uploaded_file is not None:
     try:
         df = pd.read_csv(uploaded_file)
         
-        # Pre-processing
         df['interval_index'] = np.arange(len(df))
         max_val = len(df)
         
-        # Konfigurasi Kolom
         st.sidebar.subheader("⚙️ Konfigurasi Data")
         numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
         col_flow = st.sidebar.selectbox("Kolom Flow:", numeric_cols, index=0)
@@ -146,7 +166,7 @@ if uploaded_file is not None:
 
             c_stat.markdown(f"### Status:\n## :{status_color}[{status_text}]")
             c_flow.metric("Prediksi Flow", f"{pred_flow:.1f}")
-            c_occ.metric("Prediksi Occupancy", f"{pred_occ:.2f}%")
+            c_occ.metric("Prediksi Occupancy", f"{pred_occ:.2f}")
             c_int.metric("Interval Input", final_input_value)
             c_mod.markdown(f"**Model:**\n{model_option}")
             
@@ -181,16 +201,18 @@ if uploaded_file is not None:
             st.pyplot(fig)
 
             # ==========================================
-            #   BAGIAN 1: FUZZY LOGIC MANUAL (VISUAL LENGKAP)
+            #   BAGIAN 1: FUZZY LOGIC MANUAL (PERBAIKAN VISUAL)
             # ==========================================
             st.divider()
             st.subheader("🤖 Analisis Fuzzy Logic")
 
-            # Hitung Nilai
+            # Ambil nilai MAX dari data asli untuk penskalaan
             max_flow_data = df[col_flow].max()
-            f_score, f_low, f_mid, f_high, o_low, o_mid, o_high = calculate_fuzzy_score(pred_flow, pred_occ, max_flow_data)
+            max_occ_data = df[col_occ].max() # <-- INI KUNCI PERBAIKANNYA
 
-            # Tampilan Kolom (Grafik Kiri, Tabel Kanan)
+            # Hitung Score dengan batas dinamis
+            f_score, f_low, f_mid, f_hi, o_low, o_mid, o_hi = calculate_fuzzy_score(pred_flow, pred_occ, max_flow_data, max_occ_data)
+
             col_viz, col_rule = st.columns([2, 1])
 
             with col_viz:
@@ -198,42 +220,43 @@ if uploaded_file is not None:
                 
                 # --- PLOT 1: FLOW ---
                 fig_f, ax_f = plt.subplots(figsize=(8, 3))
-                fig_f.patch.set_facecolor('#0e1117') # Background gelap
+                fig_f.patch.set_facecolor('#0e1117') 
                 ax_f.set_facecolor('#0e1117')
                 
-                # Data Dummy untuk membuat garis segitiga
                 x_flow = np.linspace(0, max_flow_data * 1.5, 500)
-                mid_point = max_flow_data * 0.5
+                mid_point_f = max_flow_data * 0.5
                 
-                # Gambar Garis Segitiga Manual
-                y_low = get_triangular_y(x_flow, -1, 0, mid_point)
-                y_mid = get_triangular_y(x_flow, 0, mid_point, max_flow_data)
-                y_hi = get_triangular_y(x_flow, mid_point, max_flow_data, max_flow_data * 1.5)
+                # Gambar Segitiga Flow
+                y_low = get_triangular_y(x_flow, -1, 0, mid_point_f)
+                y_mid = get_triangular_y(x_flow, 0, mid_point_f, max_flow_data)
+                y_high = get_triangular_y(x_flow, mid_point_f, max_flow_data, max_flow_data * 1.5)
                 
                 ax_f.plot(x_flow, y_low, label='Rendah', color='#1f77b4')
                 ax_f.plot(x_flow, y_mid, label='Sedang', color='#ff7f0e')
-                ax_f.plot(x_flow, y_hi, label='Tinggi', color='#2ca02c')
-                
-                # Garis Vertikal (Posisi Prediksi)
+                ax_f.plot(x_flow, y_high, label='Tinggi', color='#2ca02c')
                 ax_f.axvline(pred_flow, color='white', linewidth=3, linestyle='-', label='Input Anda')
                 
-                ax_f.set_title(f"Variable: Flow (Value: {pred_flow:.1f})", color='white')
+                ax_f.set_title(f"Variable: Flow (Value: {pred_flow:.0f})", color='white')
                 ax_f.legend(facecolor='#262730', edgecolor='white', loc='center right').get_texts()[0].set_color("white")
                 ax_f.tick_params(colors='white')
-                ax_f.spines['bottom'].set_color('white')
-                ax_f.spines['left'].set_color('white')
                 st.pyplot(fig_f)
                 
-                # --- PLOT 2: OCCUPANCY ---
+                # --- PLOT 2: OCCUPANCY (PERBAIKAN) ---
                 fig_o, ax_o = plt.subplots(figsize=(8, 3))
                 fig_o.patch.set_facecolor('#0e1117')
                 ax_o.set_facecolor('#0e1117')
                 
-                x_occ = np.linspace(0, 100, 500)
+                # Buat sumbu X menyesuaikan max data (bukan cuma 100)
+                x_occ = np.linspace(0, max_occ_data * 1.5, 500)
                 
-                y_o_low = get_triangular_y(x_occ, -1, 0, 40)
-                y_o_mid = get_triangular_y(x_occ, 20, 50, 80)
-                y_o_hi = get_triangular_y(x_occ, 60, 100, 150)
+                # Parameter segitiga occupancy (Sesuai fungsi calculate)
+                o_low_limit = max_occ_data * 0.4
+                o_mid_peak = max_occ_data * 0.5
+                o_high_start = max_occ_data * 0.6
+                
+                y_o_low = get_triangular_y(x_occ, -1, 0, o_low_limit)
+                y_o_mid = get_triangular_y(x_occ, max_occ_data*0.2, o_mid_peak, max_occ_data*0.8)
+                y_o_hi = get_triangular_y(x_occ, o_high_start, max_occ_data, max_occ_data * 1.5)
                 
                 ax_o.plot(x_occ, y_o_low, label='Rendah', color='#1f77b4')
                 ax_o.plot(x_occ, y_o_mid, label='Sedang', color='#ff7f0e')
@@ -242,24 +265,19 @@ if uploaded_file is not None:
                 # Garis Vertikal
                 ax_o.axvline(pred_occ, color='white', linewidth=3, linestyle='-', label='Input Anda')
                 
-                ax_o.set_title(f"Variable: Occupancy (Value: {pred_occ:.1f}%)", color='white')
+                ax_o.set_title(f"Variable: Occupancy (Value: {pred_occ:.1f})", color='white')
                 ax_o.legend(facecolor='#262730', edgecolor='white', loc='center right').get_texts()[0].set_color("white")
                 ax_o.tick_params(colors='white')
-                ax_o.spines['bottom'].set_color('white')
-                ax_o.spines['left'].set_color('white')
                 st.pyplot(fig_o)
 
             with col_rule:
-                st.markdown("**Rule Base (Aturan)**")
-                # Membuat Tabel Manual mirip gambar referensi
+                st.markdown("**Rule Base**")
                 rule_data = {
                     'Rule': ['R1', 'R2', 'R3', 'R4'],
-                    'Flow': ['Any', 'Sedang', 'Tinggi', 'Rendah'],
-                    'Occ':  ['Rendah', 'Sedang', 'Tinggi', 'Sedang'],
-                    'Output': ['LANCAR', 'PADAT', 'MACET', 'LANCAR']
+                    'Cond': ['Occ Low', 'Occ&Flow Mid', 'Occ/Flow Hi', 'Occ Mid-Flow Low'],
+                    'Out': ['LANCAR', 'PADAT', 'MACET', 'LANCAR']
                 }
-                df_rules = pd.DataFrame(rule_data)
-                st.table(df_rules)
+                st.table(pd.DataFrame(rule_data))
                 
                 st.markdown("---")
                 st.markdown("**Hasil Logika:**")
@@ -275,10 +293,9 @@ if uploaded_file is not None:
                     
                 st.markdown(f"<h1 style='color: {color_score};'>{f_score:.2f}</h1>", unsafe_allow_html=True)
                 st.markdown(f"Status: **{f_status_label}**")
-                st.caption("Skor 0 (Lancar) - 100 (Macet)")
 
             # ==========================================
-            #   BAGIAN 2: STATISTIK DATA MENTAH
+            #   BAGIAN 2: STATISTIK
             # ==========================================
             st.divider()
             with st.expander("📊 Lihat Statistik Data Mentah", expanded=False):
@@ -304,7 +321,6 @@ if uploaded_file is not None:
                     ax_h2.tick_params(colors='white')
                     st.pyplot(fig_h2)
                     
-                st.markdown("### Data Mentah (50 Baris Pertama)")
                 st.dataframe(df.head(50), use_container_width=True)
 
         else:
