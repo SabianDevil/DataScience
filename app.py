@@ -8,14 +8,6 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 
-# Import library Fuzzy Logic
-try:
-    import skfuzzy as fuzz
-    from skfuzzy import control as ctrl
-    HAS_FUZZY = True
-except ImportError:
-    HAS_FUZZY = False
-
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Sistem Prediksi Kemacetan", layout="wide")
 plt.style.use('dark_background')
@@ -126,7 +118,7 @@ if uploaded_file is not None:
             # Kartu Status Utama
             c_stat, c_flow, c_occ, c_int, c_mod = st.columns(5)
             
-            # Logika Warna Status (Sederhana untuk visual)
+            # Logika Warna Status
             status_text = "LANCAR"
             status_color = "green"
             if pred_occ > thresh_occ:
@@ -153,10 +145,14 @@ if uploaded_file is not None:
             fig.patch.set_alpha(0.0)
 
             # --- Grafik 1: Flow ---
+            # Data Asli
             ax1.plot(df['interval_index'], df[col_flow], color='white', alpha=0.1, label='Data Asli')
+            # Garis Model AI
             y_flow_line = model_flow.predict(X)
             ax1.plot(df['interval_index'], y_flow_line, color='cyan', alpha=0.5, linewidth=1, label=f'Pola {model_option}')
+            # Titik Prediksi
             ax1.scatter(final_input_value, pred_flow, color='red', s=200, zorder=10, label=display_time_str, edgecolors='white')
+            # Threshold
             ax1.axhline(thresh_flow, color='#ffcc00', linestyle='--', label='Batas Padat')
             
             ax1.set_title("Prediksi Flow", color='white')
@@ -183,135 +179,6 @@ if uploaded_file is not None:
 
             st.pyplot(fig)
 
-            # ==========================================
-            #   BAGIAN TAMBAHAN 1: FUZZY LOGIC
-            # ==========================================
-            st.divider()
-            st.subheader("🤖 Analisis Fuzzy Logic (Validasi)")
-
-            if HAS_FUZZY:
-                # 1. Tentukan Variabel Fuzzy (Universe)
-                max_flow_data = df[col_flow].max()
-                max_occ_data = df[col_occ].max()
-                
-                # Antecedents (Input)
-                # Flow: 0 sampai max flow
-                f_flow = ctrl.Antecedent(np.arange(0, max_flow_data + 1, 1), 'flow')
-                # Occupancy: 0 sampai 100% (atau max data)
-                f_occ = ctrl.Antecedent(np.arange(0, 101, 1), 'occupancy')
-                
-                # Consequent (Output): Tingkat Kemacetan (0-100)
-                f_condition = ctrl.Consequent(np.arange(0, 101, 1), 'condition')
-
-                # 2. Tentukan Membership Function (Rendah, Sedang, Tinggi)
-                # Flow (Otomatis membagi 3 range)
-                f_flow.automf(3, names=['Rendah', 'Sedang', 'Tinggi'])
-                
-                # Occupancy (Manual custom biar lebih akurat)
-                f_occ['Rendah'] = fuzz.trimf(f_occ.universe, [0, 0, 30])
-                f_occ['Sedang'] = fuzz.trimf(f_occ.universe, [20, 50, 80])
-                f_occ['Tinggi'] = fuzz.trimf(f_occ.universe, [60, 100, 100])
-
-                # Output Condition
-                f_condition['Lancar'] = fuzz.trimf(f_condition.universe, [0, 0, 50])
-                f_condition['Padat'] = fuzz.trimf(f_condition.universe, [40, 60, 80])
-                f_condition['Macet'] = fuzz.trimf(f_condition.universe, [70, 100, 100])
-
-                # 3. Rules (Aturan Fuzzy)
-                rule1 = ctrl.Rule(f_occ['Rendah'], f_condition['Lancar'])
-                rule2 = ctrl.Rule(f_occ['Sedang'] & f_flow['Sedang'], f_condition['Padat'])
-                rule3 = ctrl.Rule(f_occ['Tinggi'] | f_flow['Tinggi'], f_condition['Macet'])
-                
-                # Tambahan Rule untuk logika umum
-                rule4 = ctrl.Rule(f_occ['Sedang'] & f_flow['Rendah'], f_condition['Lancar']) # Occ sedang tapi flow rendah (mungkin lampu merah bentar)
-                rule5 = ctrl.Rule(f_occ['Sedang'] & f_flow['Tinggi'], f_condition['Padat'])  # Ramai lancar
-
-                # 4. Control System
-                traffic_ctrl = ctrl.ControlSystem([rule1, rule2, rule3, rule4, rule5])
-                traffic_sim = ctrl.ControlSystemSimulation(traffic_ctrl)
-
-                # 5. Input Nilai Prediksi ke Fuzzy
-                # Kita masukkan nilai hasil prediksi AI (Regression) ke Fuzzy Logic
-                # Pastikan nilai tidak negatif
-                input_f_flow = max(0, pred_flow)
-                input_f_occ = max(0, min(100, pred_occ)) # Cap di 100
-
-                traffic_sim.input['flow'] = input_f_flow
-                traffic_sim.input['occupancy'] = input_f_occ
-
-                # Hitung
-                try:
-                    traffic_sim.compute()
-                    result_fuzzy = traffic_sim.output['condition']
-                    
-                    # Tampilkan Hasil Fuzzy
-                    fc1, fc2 = st.columns([1, 2])
-                    
-                    with fc1:
-                        st.markdown("#### Hasil Fuzzy Score")
-                        st.markdown(f"<h1 style='text-align: center; color: yellow;'>{result_fuzzy:.2f}/100</h1>", unsafe_allow_html=True)
-                        
-                        f_status = "Tidak Diketahui"
-                        if result_fuzzy < 45: f_status = "LANCAR (Fuzzy)"
-                        elif result_fuzzy < 75: f_status = "PADAT (Fuzzy)"
-                        else: f_status = "MACET (Fuzzy)"
-                        
-                        st.markdown(f"<p style='text-align: center;'>Status: <b>{f_status}</b></p>", unsafe_allow_html=True)
-
-                    with fc2:
-                        st.info("Logika Fuzzy mempertimbangkan ketidakpastian. Jika prediksi AI bilang 'Macet' tapi Fuzzy bilang 'Padat', berarti kondisi ada di perbatasan.")
-
-                    # Visualisasi Grafik Fuzzy (Output)
-                    fig_fuz, ax_fuz = plt.subplots(figsize=(8, 3))
-                    f_condition.view(sim=traffic_sim, ax=ax_fuz)
-                    fig_fuz.patch.set_facecolor('#0e1117') # Match Streamlit dark theme bg
-                    ax_fuz.set_facecolor('#0e1117')
-                    ax_fuz.tick_params(colors='white')
-                    ax_fuz.xaxis.label.set_color('white')
-                    ax_fuz.yaxis.label.set_color('white')
-                    # Hapus judul default yang mengganggu
-                    ax_fuz.set_title("Posisi Kondisi pada Grafik Membership", color='white')
-                    st.pyplot(fig_fuz)
-                    
-                except Exception as e:
-                    st.warning(f"Tidak dapat menghitung Fuzzy Logic (Mungkin input di luar range): {e}")
-
-            else:
-                st.error("Library `scikit-fuzzy` belum terinstall. Mohon install dengan `pip install scikit-fuzzy` di terminal.")
-
-            # ==========================================
-            #   BAGIAN TAMBAHAN 2: STATISTIK DATA MENTAH
-            # ==========================================
-            st.divider()
-            with st.expander("📊 Lihat Statistik Data Mentah (Flow & Occupancy)", expanded=False):
-                st.markdown("### Ringkasan Statistik")
-                # Tampilkan Describe (Count, Mean, Std, Min, Max, dll)
-                st.dataframe(df[[col_flow, col_occ]].describe().T, use_container_width=True)
-
-                st.markdown("### Distribusi Data")
-                col_hist1, col_hist2 = st.columns(2)
-                
-                with col_hist1:
-                    st.markdown(f"**Histogram {col_flow}**")
-                    fig_h1, ax_h1 = plt.subplots()
-                    ax_h1.hist(df[col_flow], bins=30, color='skyblue', edgecolor='black', alpha=0.7)
-                    ax_h1.set_facecolor('black')
-                    fig_h1.patch.set_facecolor('black')
-                    ax_h1.tick_params(colors='white')
-                    st.pyplot(fig_h1)
-
-                with col_hist2:
-                    st.markdown(f"**Histogram {col_occ}**")
-                    fig_h2, ax_h2 = plt.subplots()
-                    ax_h2.hist(df[col_occ], bins=30, color='salmon', edgecolor='black', alpha=0.7)
-                    ax_h2.set_facecolor('black')
-                    fig_h2.patch.set_facecolor('black')
-                    ax_h2.tick_params(colors='white')
-                    st.pyplot(fig_h2)
-                    
-                st.markdown("### Data Mentah (50 Baris Pertama)")
-                st.dataframe(df.head(50), use_container_width=True)
-
         else:
             st.info("👈 Pilih Metode Input, lalu klik tombol 'Prediksi Sekarang'.")
 
@@ -322,7 +189,7 @@ else:
     # Halaman Awal
     c1, c2 = st.columns([1, 4])
     with c1:
-        # Placeholder Logo
+        # Placeholder Logo (Bisa diganti URL logo universitas Anda)
         st.image("https://cdn-icons-png.flaticon.com/512/2382/2382461.png", width=100)
     with c2:
         st.title("Sistem Prediksi Kemacetan")
