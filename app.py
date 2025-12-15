@@ -25,24 +25,23 @@ if uploaded_file is not None:
         numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
         
         col_flow = st.sidebar.selectbox("Pilih Kolom Flow:", numeric_cols, index=0)
-        # Coba otomatis pilih kolom kedua jika ada, untuk occupancy
+        # Otomatis pilih kolom ke-2 untuk occupancy jika ada
         index_occ = 1 if len(numeric_cols) > 1 else 0
         col_occ = st.sidebar.selectbox("Pilih Kolom Occupancy:", numeric_cols, index=index_occ)
 
-        # 3. KONTROL INTERAKTIF (SLIDER INTERVAL KEMBALI)
-        st.sidebar.divider()
-        st.sidebar.subheader("🎚️ Simulasi Prediksi")
+        # --- LOGIKA OTOMATIS (PENGGANTI SIMULASI PREDIKSI) ---
+        # Karena slider dihapus, kita set nilai secara otomatis:
         
-        # Slider Posisi berdasarkan urutan data (Index)
-        max_idx = len(df) - 1
-        posisi_saat_ini = st.sidebar.slider("Posisi Interval (Titik Merah)", 0, max_idx, int(max_idx/2))
+        # 1. Posisi saat ini = Data Terakhir (Paling Baru)
+        posisi_saat_ini = len(df) - 1 
         
-        # Slider Threshold
+        # 2. Threshold Flow = 70% dari Flow Maksimal
         max_flow = int(df[col_flow].max())
-        max_occ = float(df[col_occ].max())
+        threshold_flow = int(max_flow * 0.7)
         
-        threshold_flow = st.sidebar.slider("Threshold Macet (Flow)", 0, max_flow, int(max_flow * 0.7))
-        threshold_occ = st.sidebar.slider("Threshold Macet (Occupancy)", 0.0, max_occ, max_occ * 0.3)
+        # 3. Threshold Occupancy = 30% dari Occupancy Maksimal
+        max_occ = float(df[col_occ].max())
+        threshold_occ = max_occ * 0.3
 
         # --- VISUALISASI MATPLOTLIB ---
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
@@ -50,10 +49,10 @@ if uploaded_file is not None:
         # === GRAFIK 1: FLOW ===
         ax1.plot(df.index, df[col_flow], color='white', alpha=0.15, label='Data Historis', linewidth=1)
         nilai_flow_saat_ini = df.iloc[posisi_saat_ini][col_flow]
-        ax1.scatter(posisi_saat_ini, nilai_flow_saat_ini, color='red', s=100, zorder=5, label='Prediksi Saat Ini')
-        ax1.axhline(y=threshold_flow, color='#ffcc00', linestyle='--', linewidth=1.5, label='Threshold Macet')
+        ax1.scatter(posisi_saat_ini, nilai_flow_saat_ini, color='red', s=100, zorder=5, label='Data Terkini')
+        ax1.axhline(y=threshold_flow, color='#ffcc00', linestyle='--', linewidth=1.5, label='Batas Macet')
         
-        ax1.set_title("Flow Historis dengan Prediksi Saat Ini", fontsize=14, pad=15)
+        ax1.set_title("Flow Historis", fontsize=14, pad=15)
         ax1.set_ylabel("Flow")
         ax1.set_xlabel("interval")
         ax1.legend(loc='upper right', frameon=True, facecolor='white', labelcolor='black')
@@ -62,10 +61,10 @@ if uploaded_file is not None:
         # === GRAFIK 2: OCCUPANCY ===
         ax2.plot(df.index, df[col_occ], color='white', alpha=0.15, label='Data Historis', linewidth=1)
         nilai_occ_saat_ini = df.iloc[posisi_saat_ini][col_occ]
-        ax2.scatter(posisi_saat_ini, nilai_occ_saat_ini, color='red', s=100, zorder=5, label='Prediksi Saat Ini')
-        ax2.axhline(y=threshold_occ, color='#ffcc00', linestyle='--', linewidth=1.5, label='Threshold Macet')
+        ax2.scatter(posisi_saat_ini, nilai_occ_saat_ini, color='red', s=100, zorder=5, label='Data Terkini')
+        ax2.axhline(y=threshold_occ, color='#ffcc00', linestyle='--', linewidth=1.5, label='Batas Macet')
         
-        ax2.set_title("Occupancy Historis dengan Prediksi Saat Ini", fontsize=14, pad=15)
+        ax2.set_title("Occupancy Historis", fontsize=14, pad=15)
         ax2.set_ylabel("Occupancy (%)") # Satuan Persen
         ax2.set_xlabel("interval")
         ax2.legend(loc='upper right', frameon=True, facecolor='white', labelcolor='black')
@@ -75,7 +74,7 @@ if uploaded_file is not None:
 
         # --- LOGIKA STATUS & PREDIKSI ---
         st.divider()
-        st.subheader("🏁 Hasil Analisis Status")
+        st.subheader("🏁 Status Data Terkini")
 
         # Logika Penentuan Status
         status_text = "LANCAR 🟢"
@@ -102,14 +101,14 @@ if uploaded_file is not None:
         c1.metric("Posisi Interval", posisi_saat_ini)
         
         c2.metric(
-            label="Prediksi Flow", 
+            label="Flow Terkini", 
             value=f"{nilai_flow_saat_ini:.2f}", 
             delta=f"{nilai_flow_saat_ini - threshold_flow:.2f} dari batas",
             delta_color="inverse" 
         )
         
         c3.metric(
-            label="Prediksi Occupancy", 
+            label="Occupancy Terkini", 
             value=f"{nilai_occ_saat_ini:.2f}%",  # Format Persen
             delta=f"{nilai_occ_saat_ini - threshold_occ:.2f}% dari batas",
             delta_color="inverse"
